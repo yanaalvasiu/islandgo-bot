@@ -1,0 +1,12 @@
+{
+  "name": "islandgo-bot",
+  "version": "1.0.0",
+  "main": "index.ts",
+  "type": "module",
+  "dependencies": {
+    "grammy": "^1.21.1",
+    "node-cron": "^3.0.3",
+    "@supabase/supabase-js": "^2.39.8",
+    "dotenv": "^16.4.5"
+  }
+}
