@@ -3,10 +3,14 @@
   "version": "1.0.0",
   "main": "index.ts",
   "type": "module",
+  "scripts": {
+    "start": "tsx index.ts"
+  },
   "dependencies": {
+    "@supabase/supabase-js": "^2.39.8",
+    "dotenv": "^16.4.5",
     "grammy": "^1.21.1",
     "node-cron": "^3.0.3",
-    "@supabase/supabase-js": "^2.39.8",
-    "dotenv": "^16.4.5"
+    "tsx": "^4.21.0"
   }
 }
