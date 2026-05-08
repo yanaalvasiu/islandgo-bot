@@ -127,56 +127,52 @@ const isValidFormat = (text: string) => {
 }
 
 function parseDeliveryMessage(text: string) {
-  const lines = text.split('\n')
   const result: any = {
     address: null,
     customerName: null,
     phone: null,
+    pickupLocation: null,
     isDone: text.toLowerCase().includes("done")
   }
 
-  console.log(`[DEBUG] Parsing message text (first 20 chars): "${text.substring(0, 20)}..."`)
+  // Regex-based parsing — explicit and unambiguous.
+  // Each line is matched independently against known field labels.
+  // "Pickup Location" MUST be tested before bare "Location".
 
-  lines.forEach(line => {
-    let key = ""
-    let value = ""
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed || !trimmed.includes(':')) continue
 
-    if (line.includes(':')) {
-      const parts = line.split(':')
-      key = parts[0].toLowerCase().trim()
-      value = parts.slice(1).join(':').trim()
-    } else {
-      // Handle missing colons (e.g., "Customer Yanaal")
-      const lowerLine = line.toLowerCase().trim()
-      if (lowerLine.startsWith('customer ')) {
-        key = 'customer'
-        value = line.substring(line.toLowerCase().indexOf('customer') + 8).trim()
-      } else if (lowerLine.startsWith('client ')) {
-        key = 'customer'
-        value = line.substring(line.toLowerCase().indexOf('client') + 6).trim()
-      } else if (lowerLine.startsWith('location ')) {
-        key = 'location'
-        value = line.substring(line.toLowerCase().indexOf('location') + 8).trim()
-      }
+    const colonIdx = trimmed.indexOf(':')
+    const rawKey = trimmed.substring(0, colonIdx).toLowerCase().trim()
+    const value = trimmed.substring(colonIdx + 1).trim()
+    if (!value) continue
+
+    // "Pickup Location" must be tested BEFORE bare "Location" to avoid partial match
+    // "Pickup Location" = where staff picks up goods FROM
+    if (/pickup\s*location/.test(rawKey) || rawKey === 'pickup') {
+      if (!result.pickupLocation) result.pickupLocation = value
     }
-
-    if (!key) return
-
-    console.log(`[DEBUG] Line: "${line}" -> Key: "${key}", Value: "${value}"`)
-
-    if (key.includes('location')) {
-      result.address = value
+    // "Location" = delivery address (where to deliver TO)
+    else if (/^location$/.test(rawKey) || /delivery\s*address/.test(rawKey) || /^address$/.test(rawKey)) {
+      if (!result.address) result.address = value
     }
-    // Match "customer", "customer name", "client", etc.
-    // Specifically avoid "customer contact"
-    if ((key.includes('customer') || key === 'client') && !key.includes('contact') && !key.includes('phone')) {
-      result.customerName = value
+    // Customer name — "customer" but NOT "customer contact"
+    else if (/^customer$/.test(rawKey) || /^client$/.test(rawKey)) {
+      if (!result.customerName) result.customerName = value
     }
-    // Match "contact", "phone", "mobile"
-    if (key.includes('contact') || key.includes('phone') || key.includes('mobile')) {
-      result.phone = value
+    // Phone / contact
+    else if (/contact/.test(rawKey) || /phone/.test(rawKey) || /mobile/.test(rawKey)) {
+      if (!result.phone) result.phone = value
     }
-  })
+  }
+
+  // Normalize to uppercase for consistency
+  if (result.address) result.address = result.address.trim()
+  if (result.pickupLocation) result.pickupLocation = result.pickupLocation.trim()
+  if (result.customerName) result.customerName = result.customerName.trim()
+
+  console.log(`[PARSE] address="${result.address}" | pickup="${result.pickupLocation}" | customer="${result.customerName}" | phone="${result.phone}" | isDone=${result.isDone}`)
 
   return result
 }
@@ -189,6 +185,9 @@ async function syncTelegramToDelivery(telegramId: string, telegramUser: string, 
     // Normalize strings to Uppercase for consistency
     if (parsed.customerName) parsed.customerName = parsed.customerName.toUpperCase()
     if (parsed.address) parsed.address = parsed.address.toUpperCase()
+    if (parsed.pickupLocation) parsed.pickupLocation = parsed.pickupLocation.toUpperCase()
+
+    console.log(`[SYNC] Parsed: Customer=${parsed.customerName}, Address=${parsed.address}, Pickup=${parsed.pickupLocation}`)
 
     // 1. Find or create customer
     let customerId = null
@@ -245,13 +244,13 @@ async function syncTelegramToDelivery(telegramId: string, telegramUser: string, 
       }
     }
 
-    // 3. Create delivery
     const { data: delivery } = await supabase
       .from('deliveries')
       .insert({
         customer_id: customerId,
         staff_id: staffId,
         address: parsed.address,
+        pickup_location: parsed.pickupLocation,
         source: 'telegram',
         status: 'pending',
         created_at: timestamp || new Date().toISOString(),
@@ -458,8 +457,15 @@ async function initBot() {
           },
         });
       } catch (err: any) {
-        console.error("[SYSTEM] Bot crashed, restarting in 30 seconds...", err.message);
-        setTimeout(startBot, 30000);
+        if (err.message?.includes('409')) {
+          // Another instance is running — stop cleanly and wait longer before retry
+          console.error("[SYSTEM] 409 Conflict: Another bot instance is running. Stopping and waiting 60 seconds...");
+          try { await bot!.stop(); } catch (_) {}
+          setTimeout(startBot, 60000);
+        } else {
+          console.error("[SYSTEM] Bot crashed, restarting in 30 seconds...", err.message);
+          setTimeout(startBot, 30000);
+        }
       }
     };
 
